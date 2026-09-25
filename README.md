@@ -1,4 +1,4 @@
-To witness this project functioning message <a href="https://wa.me">+2348137031314</a> to test the assistant before deploying it
+To witness this project functioning message [+2348137031314](https://whatsapp.com) to test the assistant before deploying it
 
 
 
