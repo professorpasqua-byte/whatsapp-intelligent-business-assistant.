@@ -1,3 +1,19 @@
+To witness this project functioning message  +2348137031314 to test the assistant before deploying it
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 WhatsApp AI Assistant & Moderation Bot
 ​A powerful, feature-rich WhatsApp personal assistant and group moderation bot built using Node.js, Baileys, and Termux. It acts as an autonomous assistant—managing chats with advanced AI, logging memories, transcribing voice notes, processing images, and keeping groups clean.
 ​Features & Capabilities
