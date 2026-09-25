@@ -1,4 +1,4 @@
-To witness this project functioning message  +2348137031314 to test the assistant before deploying it
+To witness this project functioning message  [+2348137031314](https://wa.me) to test the assistant before deploying it
 
 
 
