@@ -1,3 +1,17 @@
+## ⭐ Support the Project
+
+If you find this WhatsApp AI Assistant useful:
+
+- ⭐ Star this repository
+- 🍴 Fork it if you want your own copy
+- 🐛 Report bugs or suggest features
+- 🔗 Share the project with other developers
+
+Your support helps the project grow! 
+
+
+
+
 # 🤖 WhatsApp AI Assistant & Moderation Bot
 
 A powerful, feature-rich WhatsApp personal assistant and group moderation bot built with **Node.js, Baileys, and Termux**.
@@ -706,7 +720,6 @@ Make sure the hosting environment supports the required dependencies, especially
 - eSpeak
 
 ---
-
 ## 🛠️ Built With
 
 - Node.js
