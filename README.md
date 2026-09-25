@@ -320,11 +320,15 @@ Mention all members of a group without displaying individual `@mentions` in the 
 !hidetag Attention everyone!
 ```
 
-🟢 Online Member Detection
+### 🟢 Online Member Detection
+
 Check active/online members in a group.
+
+```text
 !listonline
+
 The assistant attempts to identify members currently showing activity.
-📇 Group Contact Export
+🖨️ Group Contact Export
 Generate a .vcf contact file containing the group's participants.
 !svcontact
 The generated contact file can be saved to your device.
@@ -348,8 +352,8 @@ Voice messages can additionally be passed to the transcription system.
 👑 Owner Command Suite
 Owner commands can be triggered directly from WhatsApp using either:
 !
-or
-.
+or:
+🤖
 🤖 Bot Control
 !bot on
 !bot off
@@ -365,27 +369,28 @@ Control AI responses inside WhatsApp groups.
 💼 Business Mode
 !business on
 !business off
-!business set <information>
+!business set
 Configure or control the business profile.
 💰 Products & Pricing
-!prices set <details>
+!prices set
 !prices clear
 Configure the products and pricing information used by Business Mode.
 📍 Location
-!location set <address>
+!location set
 !location clear
 Set or remove the configured business location.
 👑 Owner Name
-!owner set <name>
+!owner set
 !owner clear
 Set or reset the owner's displayed name.
 🐍 Python / Termux Bridge
-!py <python code>
+!py
 Execute configured Python commands through the Termux environment.
 🌐 Language
-!lang <language>
+!lang
 !lang list
 !lang reset
+Change the AI language.
 Examples:
 !lang yoruba
 !lang igbo
@@ -393,23 +398,25 @@ Examples:
 !lang japanese
 !lang pidgin
 📢 Group Hidetag
-!hidetag <message>
-Mention all group participants.
+!hidetag
+Mention all group participants without displaying individual @mentions in the message body.
+Example:
+!hidetag Attention everyone!
 🟢 Online Members
 !listonline
 Display detected active/online group members.
-📇 Save Group Contacts
+🖨️ Save Group Contacts
 !svcontact
 Generate a VCF file containing group participants.
 🧠 Memory Vault
 !memories
 View tracked contacts and their stored information.
 📝 Remember Contact
-!remember <phone> <nickname> | <note>
+!remember
 Example:
 !remember 2348012345678 John | John's classmate
 📜 Chat History
-!history <phone>
+!history
 View recent conversation history stored for a contact.
 🧹 Wipe Memory
 !wipe
@@ -431,7 +438,7 @@ Assistant mood
 Nigeria time
 Daily bio update status
 
-📋 Command Reference
+Command Reference
 Command
 Function
 !bot
@@ -459,7 +466,7 @@ Detect active group members
 !svcontact
 Export group contacts
 !memories
-View memory vault
+View Memory Vault
 !remember
 Save contact information
 !history
@@ -468,20 +475,21 @@ View contact history
 Clear stored memory
 !status / !sys
 View system status
-
-
-Installation
+⚙️ Installation
 1. Install Termux Dependencies
 pkg update && pkg upgrade -y
-
 pkg install nodejs git python ffmpeg espeak zip -y
 2. Enter the Project Directory
 cd ~/ai-assistant
 3. Install Node.js Dependencies
 npm install
 🔑 API Configuration
-The assistant uses external AI services for text, voice transcription, and vision.
+The assistant uses external AI services for:
+Text generation
+Voice transcription
+Vision/image analysis
 Configure your own API keys securely.
+Example:
 const GROQ_API_KEY = "YOUR_GROQ_API_KEY";
 const OPENROUTER_API_KEY = "YOUR_OPENROUTER_API_KEY";
 Groq
@@ -491,7 +499,6 @@ Whisper voice transcription
 OpenRouter
 Used for:
 Vision/image analysis
-
 🚀 Running the Bot
 Start the assistant with:
 node index.js
@@ -501,7 +508,7 @@ WhatsApp → Linked Devices → Link with phone number
 and enter the generated pairing code.
 ☁️ Deployment
 The assistant can also be deployed on compatible Node.js hosting platforms such as Pterodactyl.
-Startup command
+Startup Command
 node index.js
 Make sure the hosting environment supports the required dependencies, especially:
 Node.js
