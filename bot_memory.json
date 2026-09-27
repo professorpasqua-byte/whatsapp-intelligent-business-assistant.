@@ -5,7 +5,7 @@
       "name": "User +156608197841015",
       "nickname": "",
       "firstSeen": "2026-09-14T11:02:01.952Z",
-      "lastSeen": "2026-09-14T11:10:00.897Z",
+      "lastSeen": "2026-09-27T16:56:33.408Z",
       "notes": "",
       "mood": "neutral",
       "bondScore": 0,
@@ -19,80 +19,130 @@
       "name": "Hancock",
       "nickname": "",
       "firstSeen": "2026-09-14T11:02:20.360Z",
-      "lastSeen": "2026-09-14T11:13:04.151Z",
+      "lastSeen": "2026-09-27T16:55:08.870Z",
       "notes": "",
-      "mood": "neutral",
-      "bondScore": 0,
+      "mood": "stressed",
+      "bondScore": 1.5,
       "history": [
         {
           "role": "user",
-          "content": "What's my name",
-          "channel": "dm"
+          "content": "What's my name"
         },
         {
           "role": "assistant",
-          "content": "Your name’s Hancock.",
-          "channel": "dm"
+          "content": "Your name is Hancock."
         },
         {
           "role": "user",
-          "content": "[They just tagged you with no additional message - greet them casually and ask what they need]",
-          "channel": "group:120363428438923916@g.us"
+          "content": "Hi"
         },
         {
           "role": "assistant",
-          "content": "Hey Hancock! What's up?",
-          "channel": "group:120363428438923916@g.us"
+          "content": "Hey again! Anything you need?"
         },
         {
           "role": "user",
-          "content": "[Replying to: \"Hey Hancock! What's up?\"] We don talk for dm before?",
-          "channel": "group:120363428438923916@g.us"
+          "content": "Hi"
         },
         {
           "role": "assistant",
-          "content": "No, we haven’t chatted privately before—just catching up here in the group. What can I help you with?",
-          "channel": "group:120363428438923916@g.us"
+          "content": "Hey! 😊 What can I do for you?"
         },
         {
           "role": "user",
-          "content": "Have we chatted in a group before",
-          "channel": "dm"
+          "content": "You sound corny"
         },
         {
           "role": "assistant",
-          "content": "No, this is just a private one‑on‑one chat between us.",
-          "channel": "dm"
+          "content": "Haha, just trying to keep the vibe fresh. What’s up?"
         },
         {
           "role": "user",
-          "content": "Nice",
-          "channel": "dm"
+          "content": ".tts"
         },
         {
           "role": "assistant",
-          "content": "Thanks! Let me know if you need anything.",
-          "channel": "dm"
+          "content": "Sure thing—just let me know what you’d like me to read out or send as a voice note."
         },
         {
           "role": "user",
-          "content": "[Replying to: \"No, we haven’t chatted privately before—just catching up here in the group. What can I help you with?\"] Are you sure \nRemember me ?",
-          "channel": "group:120363428438923916@g.us"
+          "content": "Hmm"
         },
         {
           "role": "assistant",
-          "content": "Yes, I remember you—nice to see you again! How can I assist today?",
-          "channel": "group:120363428438923916@g.us"
+          "content": "Anything specific you’d like to talk about?"
         },
         {
           "role": "user",
-          "content": "[Replying to: \"Yes, I remember you—nice to see you again! How can I assist today?\"] Remember me from dm ?",
-          "channel": "group:120363428438923916@g.us"
+          "content": "[They just tagged you with no additional message - greet them casually and ask what they need]"
         },
         {
           "role": "assistant",
-          "content": "I don’t have any prior private chats with you—just know you from this group. What’s on your mind?",
-          "channel": "group:120363428438923916@g.us"
+          "content": "Hey Hancock! 👋 What can I help you with?"
+        },
+        {
+          "role": "user",
+          "content": "[Replying to: \"Hey Hancock! 👋 What can I help you with?\"] Nothing much"
+        },
+        {
+          "role": "assistant",
+          "content": "Gotcha. Just holler if anything comes up!"
+        },
+        {
+          "role": "user",
+          "content": "No"
+        },
+        {
+          "role": "assistant",
+          "content": "Alright, just ping me if you think of anything."
+        },
+        {
+          "role": "user",
+          "content": "Hi"
+        },
+        {
+          "role": "assistant",
+          "content": "Hey! Anything you need, just let me know."
+        },
+        {
+          "role": "user",
+          "content": "Hmm"
+        },
+        {
+          "role": "assistant",
+          "content": "Sounds like a lazy Sunday vibe—just hit me up when something pops up!"
+        },
+        {
+          "role": "user",
+          "content": "hi"
+        },
+        {
+          "role": "assistant",
+          "content": "Hey again! 😊 Anything on your mind?"
+        },
+        {
+          "role": "user",
+          "content": "Which one is smiley face with smiling eyes again 😂"
+        },
+        {
+          "role": "assistant",
+          "content": "The classic “smiling face with smiling eyes” is 😊. (If you want the open‑mouth version, that’s 😄.)"
+        },
+        {
+          "role": "user",
+          "content": "What is Charlie's number"
+        },
+        {
+          "role": "assistant",
+          "content": "+2349135615687"
+        },
+        {
+          "role": "user",
+          "content": "Omo am tired oo"
+        },
+        {
+          "role": "assistant",
+          "content": "I hear you—sounds exhausting. Take a breather if you can; even a short pause can help. Let me know if there’s anything I can do."
         }
       ],
       "channelsSeen": {
@@ -131,6 +181,64 @@
       },
       "crossChannelConsent": {},
       "pendingConsentChannel": null
+    },
+    "68943351926979": {
+      "jid": "68943351926979@s.whatsapp.net",
+      "name": "Princess ❤️🩷",
+      "nickname": "",
+      "firstSeen": "2026-09-27T14:08:59.949Z",
+      "lastSeen": "2026-09-27T14:09:00.413Z",
+      "notes": "",
+      "mood": "neutral",
+      "bondScore": 0,
+      "history": []
+    },
+    "162539514126575": {
+      "jid": "162539514126575@s.whatsapp.net",
+      "name": "💞❣️a💗u💕r💔💗o💞r💕a💞",
+      "nickname": "",
+      "firstSeen": "2026-09-27T14:10:14.335Z",
+      "lastSeen": "2026-09-27T14:10:14.335Z",
+      "notes": "",
+      "mood": "neutral",
+      "bondScore": 0,
+      "history": []
+    },
+    "71464598409459": {
+      "jid": "71464598409459@s.whatsapp.net",
+      "name": "velstarz",
+      "nickname": "",
+      "firstSeen": "2026-09-27T16:24:15.718Z",
+      "lastSeen": "2026-09-27T16:24:15.718Z",
+      "notes": "",
+      "mood": "neutral",
+      "bondScore": 0,
+      "lastAfkNotified": "",
+      "history": []
+    },
+    "21922268074047": {
+      "jid": "21922268074047@s.whatsapp.net",
+      "name": "LINUX!ㅤ모",
+      "nickname": "",
+      "firstSeen": "2026-09-27T16:24:42.705Z",
+      "lastSeen": "2026-09-27T16:24:42.705Z",
+      "notes": "",
+      "mood": "neutral",
+      "bondScore": 0,
+      "lastAfkNotified": "",
+      "history": []
+    },
+    "184052887867400": {
+      "jid": "184052887867400@s.whatsapp.net",
+      "name": "ͥ ͣ ͫ 𝕯𝖆𝖗𝖐CEO🖤࿐",
+      "nickname": "",
+      "firstSeen": "2026-09-27T16:28:09.837Z",
+      "lastSeen": "2026-09-27T16:28:09.838Z",
+      "notes": "",
+      "mood": "neutral",
+      "bondScore": 0,
+      "lastAfkNotified": "",
+      "history": []
     }
   },
   "groups": {
@@ -138,16 +246,63 @@
       "members": {
         "232165262491812": {
           "name": "Hancock",
-          "lastActive": "2026-09-14T11:13:04.150Z"
+          "lastActive": "2026-09-27T16:55:08.871Z"
+        },
+        "156608197841015": {
+          "name": "User +156608197841015",
+          "lastActive": "2026-09-27T16:56:33.408Z"
         }
       },
       "warnings": {},
-      "subject": "Test"
+      "subject": "Test",
+      "mediaSpam": {
+        "232165262491812": {
+          "hash": "03f4f4c0980c69ac316253c2f2ccd8c8",
+          "count": 1
+        }
+      },
+      "mediaWarnings": {
+        "232165262491812": 2
+      }
+    },
+    "120363427457314285@g.us": {
+      "members": {
+        "68943351926979": {
+          "name": "Princess ❤️🩷",
+          "lastActive": "2026-09-27T14:09:00.413Z"
+        },
+        "162539514126575": {
+          "name": "💞❣️a💗u💕r💔💗o💞r💕a💞",
+          "lastActive": "2026-09-27T14:10:14.335Z"
+        },
+        "71464598409459": {
+          "name": "velstarz",
+          "lastActive": "2026-09-27T16:24:15.718Z"
+        },
+        "21922268074047": {
+          "name": "LINUX!ㅤ모",
+          "lastActive": "2026-09-27T16:24:42.705Z"
+        },
+        "184052887867400": {
+          "name": "ͥ ͣ ͫ 𝕯𝖆𝖗𝖐CEO🖤࿐",
+          "lastActive": "2026-09-27T16:28:09.838Z"
+        }
+      },
+      "warnings": {}
+    },
+    "120363428026678929@g.us": {
+      "members": {
+        "232165262491812": {
+          "name": "Hancock",
+          "lastActive": "2026-09-27T16:11:16.537Z"
+        }
+      },
+      "warnings": {}
     }
   },
   "settings": {
     "botActive": true,
-    "voiceMode": false,
+    "voiceMode": true,
     "groupChatMode": true,
     "businessActive": false,
     "businessInfo": "",
@@ -155,8 +310,17 @@
     "locationInfo": "",
     "customOwnerName": "Charlie",
     "aiLanguage": "English",
-    "assistantMood": "relaxed and easygoing",
-    "assistantMoodDate": "2026-September-14",
-    "lastBioUpdateDate": "2026-September-14"
+    "assistantMood": "witty and teasing",
+    "assistantMoodDate": "2026-September-27",
+    "lastBioUpdateDate": "2026-September-27",
+    "customOwnerNumber": "2349135615687",
+    "blacklist": [
+      "2349135615687"
+    ],
+    "afkActive": false,
+    "afkReason": "",
+    "afkSince": "",
+    "ttsVoice": "en-NG-AbeoNeural",
+    "antispamActive": true
   }
 }

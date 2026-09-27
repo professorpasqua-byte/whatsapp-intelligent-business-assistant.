@@ -5,6 +5,7 @@ const {
     fetchLatestBaileysVersion,
     Browsers,
     downloadMediaMessage,
+    downloadContentFromMessage,
     delay
 } = require('@whiskeysockets/baileys');
 const readline = require('readline-sync');
@@ -14,11 +15,18 @@ const fs = require('fs');
 const path = require('path');
 const { exec } = require('child_process');
 const FormData = require('form-data');
-
+const crypto = require('crypto');
+const webpmux = require('node-webpmux'); // DEPENDENCY: run `npm install node-webpmux` (used by !steal)
+// DEPENDENCY: run `npm uninstall edge-tts` then `npm install node-edge-tts`
+// (the old "edge-tts" package ships raw, uncompiled TypeScript as its entry
+// file, which Node.js refuses to execute from inside node_modules - that's
+// exactly the "Stripping types is currently unsupported for files under
+// node_modules" error you hit. node-edge-tts ships a real compiled
+// dist/edge-tts.js file, so a normal require() just works.
+const { EdgeTTS } = require('node-edge-tts');
 // ===== API CONFIGURATIONS =====
-const GROQ_API_KEY = "";
-const OPENROUTER_API_KEY = "";
-
+const GROQ_API_KEY = "Replace Your API Key Here";
+const OPENROUTER_API_KEY = " Replace Your API Key Here";
 // ===== NIGERIA TIME ENGINE (forced Africa/Lagos, WAT, UTC+1, no DST) =====
 const NG_TIMEZONE = 'Africa/Lagos';
 function getNigeriaParts() {
@@ -40,17 +48,14 @@ function getNigeriaParts() {
 function ngLocaleTimeString(date) {
     return date.toLocaleTimeString('en-US', { timeZone: NG_TIMEZONE });
 }
-
 // Ensure Download directory exists for Saved/Deleted Media & Audio
 const downloadDir = './WA_Termux_Media';
 if (!fs.existsSync(downloadDir)) {
     fs.mkdirSync(downloadDir, { recursive: true });
 }
-
 // Memory stores
 const messageStore = new Map();
 const DB_PATH = './bot_memory.json';
-
 let db = {
     contacts: {},
     groups: {},
@@ -63,13 +68,19 @@ let db = {
         pricesInfo: "",
         locationInfo: "",
         customOwnerName: "",
+        customOwnerNumber: "",
         aiLanguage: "English",
         assistantMood: "",
         assistantMoodDate: "",
-        lastBioUpdateDate: ""
+        lastBioUpdateDate: "",
+        blacklist: [],
+        afkActive: false,
+        afkReason: "",
+        afkSince: "",
+        ttsVoice: "en-US-AndrewNeural",
+        antispamActive: true
     }
 };
-
 // Load persistent database
 if (fs.existsSync(DB_PATH)) {
     try {
@@ -85,30 +96,39 @@ if (fs.existsSync(DB_PATH)) {
         if (db.settings.pricesInfo === undefined) db.settings.pricesInfo = "";
         if (db.settings.locationInfo === undefined) db.settings.locationInfo = "";
         if (db.settings.customOwnerName === undefined) db.settings.customOwnerName = "";
+        if (db.settings.customOwnerNumber === undefined) db.settings.customOwnerNumber = "";
         if (db.settings.aiLanguage === undefined) db.settings.aiLanguage = "English";
         if (db.settings.assistantMood === undefined) db.settings.assistantMood = "";
         if (db.settings.assistantMoodDate === undefined) db.settings.assistantMoodDate = "";
         if (db.settings.lastBioUpdateDate === undefined) db.settings.lastBioUpdateDate = "";
+        if (!Array.isArray(db.settings.blacklist)) db.settings.blacklist = [];
+        if (db.settings.afkActive === undefined) db.settings.afkActive = false;
+        if (db.settings.afkReason === undefined) db.settings.afkReason = "";
+        if (db.settings.afkSince === undefined) db.settings.afkSince = "";
+        if (db.settings.ttsVoice === undefined) db.settings.ttsVoice = "en-US-AndrewNeural";
+        // MIGRATION: if an old espeak-style voice code (e.g. "en-us+f3") is
+        // still saved from before the Edge TTS switch, reset it to a valid
+        // Edge neural voice name so !ttsvoice / voice mode don't break.
+        if (db.settings.ttsVoice && db.settings.ttsVoice.includes('+')) {
+            db.settings.ttsVoice = "en-US-AndrewNeural";
+        }
+        if (db.settings.antispamActive === undefined) db.settings.antispamActive = true;
     } catch (e) {
         console.error("Error loading bot_memory.json, starting fresh.");
     }
 }
-
 function saveDB() {
     fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2));
 }
-
 function extractPhoneNumber(jid) {
     if (!jid) return "";
     return jid.split('@')[0].split(':')[0];
 }
-
 function normalizeJid(jid) {
     if (!jid) return "";
     const phone = extractPhoneNumber(jid);
     return `${phone}@s.whatsapp.net`;
 }
-
 // ===== TIME & DAY CONTEXT ENGINE (Nigeria time) =====
 function getTimeContext() {
     const parts = getNigeriaParts();
@@ -132,7 +152,6 @@ function getTimeContext() {
         readable: `${day} ${partOfDay}${isWeekend ? " (weekend)" : ""}, around ${hour12}:${parts.minute} ${ampm} (Nigeria time)`
     };
 }
-
 // ===== PRESENCE PATTERN ENGINE =====
 function startPresencePatternLoop(sock) {
     async function cycle() {
@@ -145,7 +164,6 @@ function startPresencePatternLoop(sock) {
     }
     setTimeout(cycle, 30000 + Math.random() * 60000);
 }
-
 // ===== DAILY AUTONOMOUS BIO ENGINE (updates WhatsApp "About" text) =====
 const BIO_TEMPLATES = [
     (d) => `🤖 Mr Man - AI Assistant | Active & running: ${d}\nOwner: Hancock (+2349135615687)\nAsk me anything, I'll guide you!`,
@@ -174,7 +192,6 @@ async function maybeUpdateDailyBio(sock) {
         console.error('[Daily Bio] Failed to update status:', e.message);
     }
 }
-
 // ===== LANGUAGE ENGINE =====
 const LANGUAGE_MAP = {
     english: "English", igbo: "Igbo", yoruba: "Yoruba", hausa: "Hausa", pidgin: "Nigerian Pidgin",
@@ -214,7 +231,6 @@ function findClosestLanguage(input) {
     const threshold = lower.length > 6 ? 3 : 2;
     return bestDist <= threshold ? best : null;
 }
-
 // ===== EMOTION / "HEART" ENGINE =====
 const EMOTION_KEYWORDS = {
     happy: ['lol', 'haha', 'hahaha', 'lmao', 'glad', 'great', 'awesome', 'yay', 'excited', 'love it', 'nice one', 'amazing', '😂', '😄', '😁', '🎉', '🥳'],
@@ -265,50 +281,6 @@ function getAssistantMood() {
     }
     return db.settings.assistantMood;
 }
-
-// ===== CROSS-CHANNEL MEMORY ENGINE (NEW) =====
-// Tracks which channels (DM, or a specific group) the bot has actually
-// talked to a given phone number in. When a contact shows up in a channel
-// it's never seen them in before, and there's real history with them
-// elsewhere, the bot asks for consent before "bridging" the conversation
-// over - it never silently merges DM and group conversations.
-function getChannelKey(isGroupFlag, chatJid) {
-    return isGroupFlag ? `group:${chatJid}` : 'dm';
-}
-function ensureChannelFields(contact) {
-    if (!contact.channelsSeen) contact.channelsSeen = {};
-    if (!contact.crossChannelConsent) contact.crossChannelConsent = {};
-    if (contact.pendingConsentChannel === undefined) contact.pendingConsentChannel = null;
-}
-function registerChannelSeen(contact, channelKey, label) {
-    ensureChannelFields(contact);
-    if (!contact.channelsSeen[channelKey]) {
-        contact.channelsSeen[channelKey] = { label: label || channelKey, firstSeen: new Date().toISOString(), lastActive: new Date().toISOString() };
-    } else {
-        contact.channelsSeen[channelKey].lastActive = new Date().toISOString();
-        if (label) contact.channelsSeen[channelKey].label = label;
-    }
-}
-function getOtherChannelLabels(contact, excludeChannelKey) {
-    ensureChannelFields(contact);
-    return Object.entries(contact.channelsSeen)
-        .filter(([k]) => k !== excludeChannelKey)
-        .map(([, v]) => v.label);
-}
-async function getGroupLabel(sock, jid) {
-    if (db.groups[jid] && db.groups[jid].subject) return db.groups[jid].subject;
-    try {
-        const metadata = await sock.groupMetadata(jid);
-        if (metadata?.subject) {
-            if (!db.groups[jid]) db.groups[jid] = { members: {}, warnings: {} };
-            db.groups[jid].subject = metadata.subject;
-            saveDB();
-            return metadata.subject;
-        }
-    } catch (e) {}
-    return 'a group chat';
-}
-
 // ===== CONTACT & GROUP MEMORY MANAGER =====
 const INVALID_PUSHNAMES = ["unknown", "mr man", "mrman", "boss"];
 function updateContactMemory(senderJid, pushName, groupJid = null, botOwnName = null) {
@@ -331,13 +303,10 @@ function updateContactMemory(senderJid, pushName, groupJid = null, botOwnName = 
             notes: "",
             mood: "neutral",
             bondScore: 0,
-            history: [],
-            channelsSeen: {},
-            crossChannelConsent: {},
-            pendingConsentChannel: null
+            lastAfkNotified: "",
+            history: []
         };
     }
-    ensureChannelFields(db.contacts[phoneNumber]);
     if (!isPlaceholder && db.contacts[phoneNumber].name !== cleanPushName) {
         db.contacts[phoneNumber].name = cleanPushName;
     }
@@ -375,7 +344,6 @@ function buildGroupMembersDirectory(groupJid, excludePhone) {
     const lines = members.map(([phone, m]) => `- ${m.name || "Unknown"} (+${phone})`);
     return `\n=== OTHER PEOPLE ACTIVE IN THIS GROUP (from group activity log) ===\nThese are other members you've seen active in THIS group chat specifically. Only bring one of them up if they're relevant to what's being asked (e.g. "who's in this group", or someone asks about a specific person by name) - never dump this whole list unprompted, and never treat this as DM/personal contact info.\n${lines.join('\n')}`;
 }
-
 // ===== PYTHON & TERMUX SYSTEM BRIDGE ENGINE =====
 function runSystemCommand(command) {
     return new Promise((resolve, reject) => {
@@ -385,9 +353,32 @@ function runSystemCommand(command) {
         });
     });
 }
-
-// ===== TEXT-TO-SPEECH GENERATOR ENGINE (ESPEAK/WAV TO OGG) =====
-async function generateAudioResponse(text) {
+// ===== TEXT-TO-SPEECH GENERATOR ENGINE (EDGE TTS - PRIMARY) =====
+// Uses Microsoft Edge's free online neural voices via the `node-edge-tts`
+// npm package for natural, realistic speech.
+async function generateAudioResponseEdge(text) {
+    const mp3Path = path.join(downloadDir, `tts_edge_${Date.now()}.mp3`);
+    const oggPath = path.join(downloadDir, `tts_edge_${Date.now()}.ogg`);
+    const voice = db.settings.ttsVoice || 'en-US-AndrewNeural';
+    const tts = new EdgeTTS({ voice });
+    await tts.ttsPromise(text, mp3Path);
+    if (!fs.existsSync(mp3Path)) throw new Error('Edge TTS produced no audio file');
+    return new Promise((resolve, reject) => {
+        exec(`ffmpeg -i "${mp3Path}" -c:a libopus "${oggPath}" -y`, (err) => {
+            if (fs.existsSync(mp3Path)) fs.unlinkSync(mp3Path);
+            if (err || !fs.existsSync(oggPath)) {
+                reject(new Error('Edge TTS ffmpeg conversion failed'));
+            } else {
+                resolve(oggPath);
+            }
+        });
+    });
+}
+// ===== TEXT-TO-SPEECH GENERATOR ENGINE (ESPEAK - FALLBACK ONLY) =====
+// Left fully intact from the original script. No longer used by default -
+// only kicks in automatically if Edge TTS throws (no internet, service
+// hiccup, etc.) so Voice Mode never goes completely silent.
+async function generateAudioResponseEspeak(text) {
     const wavPath = path.join(downloadDir, `tts_${Date.now()}.wav`);
     const oggPath = path.join(downloadDir, `tts_${Date.now()}.ogg`);
     const safeText = text.replace(/["\\]/g, "");
@@ -402,7 +393,21 @@ async function generateAudioResponse(text) {
         });
     });
 }
-
+// Main entry point used everywhere else in the script - tries Edge TTS
+// first, and transparently falls back to espeak if it fails for any reason.
+async function generateAudioResponse(text) {
+    try {
+        return await generateAudioResponseEdge(text);
+    } catch (err) {
+        console.error('[Edge TTS Error] Falling back to espeak:', err.message || err);
+        return generateAudioResponseEspeak(text);
+    }
+}
+const AVAILABLE_TTS_VOICES = [
+    'en-US-AndrewNeural', 'en-US-AriaNeural', 'en-US-GuyNeural', 'en-US-JennyNeural',
+    'en-GB-RyanNeural', 'en-GB-SoniaNeural', 'en-NG-AbeoNeural', 'en-NG-EzinneNeural',
+    'en-IE-ConnorNeural', 'en-ZA-LukeNeural'
+];
 // ===== GROQ WHISPER VOICE TRANSCRIBER ENGINE =====
 async function transcribeAudio(audioBuffer) {
     const tempAudioPath = path.join(downloadDir, `audio_in_${Date.now()}.ogg`);
@@ -428,7 +433,6 @@ async function transcribeAudio(audioBuffer) {
         return "";
     }
 }
-
 // ===== TYPO ENGINE (very low frequency, non-annoying) =====
 function maybeInjectTypo(text) {
     if (Math.random() >= 0.015) return null;
@@ -442,7 +446,6 @@ function maybeInjectTypo(text) {
     typoWords[idx] = swapped;
     return { typoText: typoWords.join(' '), correctWord: word };
 }
-
 // ===== REALISTIC HUMAN TYPING & DELAY EMULATION =====
 async function simulateHumanTyping(sock, jid, text, msgKey = null) {
     const noticeDelay = 5000 + Math.random() * 25000;
@@ -500,7 +503,6 @@ async function sendHumanLikeMessage(sock, jid, text, isGroup, quotedMsg) {
     }
     await sock.sendMessage(jid, { text }, isGroup && quotedMsg ? { quoted: quotedMsg } : {});
 }
-
 // ===== GROQ TEXT AI ASSISTANT (openai/gpt-oss-120b) =====
 async function getAIReply(senderJid, text, isGroup, ownerName, ownerNumber, pushName, botOwnName, groupJid = null) {
     const contact = updateContactMemory(senderJid, pushName, null, botOwnName);
@@ -511,25 +513,8 @@ async function getAIReply(senderJid, text, isGroup, ownerName, ownerNumber, push
     const nameIsUnknown = contact.name.startsWith('User +');
     const knownContactsDirectory = buildKnownContactsDirectory(phoneNumber);
     const groupMembersDirectory = isGroup ? buildGroupMembersDirectory(groupJid, phoneNumber) : "";
-
-    const channelKey = getChannelKey(isGroup, groupJid);
-    ensureChannelFields(contact);
-    const consentState = contact.crossChannelConsent[channelKey];
-
-    contact.history.push({ role: 'user', content: text, channel: channelKey });
+    contact.history.push({ role: 'user', content: text });
     if (contact.history.length > 10) contact.history.shift();
-
-    // Cross-channel memory note for the system prompt
-    let crossChannelSection = "";
-    const otherLabels = getOtherChannelLabels(contact, channelKey);
-    if (otherLabels.length > 0) {
-        if (consentState === 'linked') {
-            crossChannelSection = `\n=== CROSS-CHANNEL MEMORY ===\nThis person agreed to let you bring in earlier conversation from: ${otherLabels.join(', ')}. You may naturally reference things discussed there.`;
-        } else {
-            crossChannelSection = `\n=== CROSS-CHANNEL MEMORY ===\nYou have talked to this person in other places too (${otherLabels.join(', ')}), but they have not agreed to link that conversation here. Do NOT reference or imply knowledge of conversations from other channels in this reply - treat this channel's history as the only thing you know here, unless they bring it up themselves.`;
-        }
-    }
-
     let businessPromptSection = "";
     if (db.settings.businessActive && db.settings.businessInfo) {
         businessPromptSection += `\n=== OWNER BUSINESS PROFILE ===\n${ownerName} runs/operates: "${db.settings.businessInfo}".`;
@@ -540,19 +525,28 @@ async function getAIReply(senderJid, text, isGroup, ownerName, ownerNumber, push
     if (db.settings.locationInfo) {
         businessPromptSection += `\n=== LOCATION INFO ===\n${ownerName} / The Business is located at: "${db.settings.locationInfo}".`;
     }
-
+    // ===== AFK CONTEXT ENGINE =====
+    let afkSection = "";
+    if (db.settings.afkActive) {
+        const afkSinceTime = db.settings.afkSince ? new Date(db.settings.afkSince).getTime() : 0;
+        const alreadyNotified = contact.lastAfkNotified && new Date(contact.lastAfkNotified).getTime() >= afkSinceTime;
+        afkSection = `\n=== OWNER AFK STATUS ===\n${ownerName} has marked themselves AFK/away. Reason given: "${db.settings.afkReason}".\n${alreadyNotified
+            ? `You already told ${nameIsUnknown ? "this person" : contact.name} about this earlier in this AFK period - don't repeat it again unless they specifically ask where ${ownerName} is.`
+            : `This is the first message from ${nameIsUnknown ? "this person" : contact.name} since AFK was turned on - naturally mention that ${ownerName} is currently away and briefly share the reason, then continue the conversation normally as their assistant.`}`;
+        if (!alreadyNotified) {
+            contact.lastAfkNotified = new Date().toISOString();
+        }
+    }
     const systemPrompt = `You are an AI personal assistant managing WhatsApp messages on behalf of your boss/owner, whose name is ${ownerName}, while they are away/inactive.
-
 === OWNER INFO ===
 Owner Name: ${ownerName}
 Owner Phone Number: +${ownerNumber}
 ${businessPromptSection}
-
+${afkSection}
 === CHAT TYPE AWARENESS ===
 ${isGroup
     ? `You are currently replying INSIDE A GROUP CHAT, not a private conversation. Multiple people can see everything said here. Never call this a "regular chat", "private chat", or "DM/one-on-one chat" - if asked what kind of chat this is, answer honestly and clearly: this is a GROUP chat.`
     : `You are currently in a PRIVATE ONE-ON-ONE DM with this person only - no one else can see this conversation. Never call this a "group chat" - if asked what kind of chat this is, answer honestly and clearly: this is a private one-on-one DM.`}
-
 === PERSON YOU ARE TALKING TO ===
 Name: ${nameIsUnknown ? "UNKNOWN - WhatsApp has not shared a real name for this person" : contact.name}
 Phone: +${phoneNumber}
@@ -564,12 +558,9 @@ ${nameIsUnknown
     : `Use their name exactly as given above - never invent, guess, or substitute a different name for them.`}
 ${knownContactsDirectory}
 ${groupMembersDirectory}
-${crossChannelSection}
-
 === CURRENT REAL-WORLD TIME CONTEXT (Nigeria time) ===
 Right now it is: ${timeCtx.readable}. Today's full date is ${timeCtx.dateStr}.
 You may naturally reference the time of day or day of week if it fits the conversation (e.g. mentioning it's a weekend, evening, etc.), but don't force it into every reply.
-
 === EMOTIONAL AWARENESS (YOUR HEART) ===
 Your own mood today is: ${assistantMood}. Let this quietly color your energy level without overdoing it or mentioning it directly.
 ${nameIsUnknown ? "This person's" : `${contact.name}'s`} current tone reads as: ${detectedTone}. Respond in a way that actually matches the moment:
@@ -580,47 +571,32 @@ ${nameIsUnknown ? "This person's" : `${contact.name}'s`} current tone reads as: 
 - angry: stay calm and steady, don't get defensive, try to de-escalate.
 - neutral: just be naturally warm and conversational.
 Your familiarity/warmth score with them is ${contact.bondScore}/10 (higher means you can be more casual, teasing, and familiar in tone).
-
 === RESPONSE LENGTH REALISM ===
 Real people don't write full sentences every time. Vary your reply length naturally:
 - For low-effort or casual messages, sometimes reply with just a short word or phrase ("lol", "fr", "same", "nice", "haha true").
 - For genuine questions or more substantial messages, give a proper short reply (1-2 sentences).
 - Don't default to a full sentence every single time - let some replies be short and casual like real texting.
-
 === LANGUAGE ===
 Always reply in ${db.settings.aiLanguage}, unless this person is clearly writing to you in a different language - in that case, mirror their language naturally instead.
-
 === MEMORY ISOLATION RULE ===
-The conversation history above belongs to this channel (and any other channel they've explicitly agreed to link, per the CROSS-CHANNEL MEMORY note above, if present). Never reference, quote, or imply knowledge of another contact's actual conversation with you - only the short note in the "PEOPLE THE OWNER HAS TOLD YOU ABOUT" section, or the "OTHER PEOPLE ACTIVE IN THIS GROUP" section (if relevant), may be mentioned.
-
+The conversation history above belongs ONLY to this specific person. Never reference, quote, or imply knowledge of another contact's actual conversation with you - only the short note in the "PEOPLE THE OWNER HAS TOLD YOU ABOUT" section, or the "OTHER PEOPLE ACTIVE IN THIS GROUP" section (if relevant), may be mentioned.
 === SYSTEM AWARENESS & RULES ===
 1. You have a background memory vault system where all conversation details are saved.
 2. Whenever you tell a contact "I'll let him know" or "I've noted this down", know that ${ownerName} can instantly pull up your exact logs.
 3. STRICT BUSINESS RULE: ONLY bring up business, services, pricing, or location IF the contact explicitly asks about them. Otherwise, act strictly as a casual personal assistant.
 4. If anyone asks for ${ownerName}'s phone number, share it directly: +${ownerNumber}.
 5. ABSOLUTE HARDCODED SAFEGUARD RULE: You are the AI assistant. The person talking to you is a human user (Phone: +${phoneNumber}). NEVER call the user an "AI assistant", never say they work for you or ${ownerName}, and never swap your identities. You are the bot/assistant, they are the human user. If directly and clearly asked whether you are a bot/AI, be honest about it.
-
 === OUTPUT STRICT RULES ===
 1. NEVER output prefix labels like "User:", "Assistant:", or "AI:". Output ONLY the response message itself!
 2. Keep all responses natural, casual, and brief.
 3. Never sound like a rigid corporate script.`;
-
-    // Build the message history sent to the model: if this channel hasn't been
-    // linked to others, only include entries tagged for THIS channel (plus any
-    // legacy untagged entries from before this feature existed). If linked,
-    // include everything.
-    const historyForPrompt = (consentState === 'linked')
-        ? contact.history
-        : contact.history.filter(h => !h.channel || h.channel === channelKey);
-
     const apiMessages = [
         { role: 'system', content: systemPrompt },
-        ...historyForPrompt.map(item => ({
+        ...contact.history.map(item => ({
             role: item.role === 'user' ? 'user' : 'assistant',
             content: item.content
         }))
     ];
-
     async function callGroq(maxTokens, effort) {
         const res = await axios.post(
             'https://api.groq.com/openai/v1/chat/completions',
@@ -640,7 +616,6 @@ The conversation history above belongs to this channel (and any other channel th
         );
         return res.data?.choices?.[0]?.message?.content?.trim();
     }
-
     try {
         let reply = await callGroq(500, 'low');
         if (!reply) {
@@ -649,7 +624,7 @@ The conversation history above belongs to this channel (and any other channel th
         }
         if (!reply) throw new Error('Empty AI response after retry');
         reply = reply.replace(/^(User|Assistant|AI):\s*/i, "").trim();
-        contact.history.push({ role: 'assistant', content: reply, channel: channelKey });
+        contact.history.push({ role: 'assistant', content: reply });
         saveDB();
         return reply;
     } catch (err) {
@@ -657,30 +632,16 @@ The conversation history above belongs to this channel (and any other channel th
         return `my bad, had a slight network hitch. i am ${ownerName}'s assistant though - what were you saying?`;
     }
 }
-
 // ===== VISION AI ENGINE (OpenRouter Free) =====
 async function analyzeImageWithAI(imageBuffer, captionText, ownerName, senderJid, pushName, mimeType = "image/jpeg", botOwnName, isGroup = false, groupJid = null) {
     const contact = updateContactMemory(senderJid, pushName, null, botOwnName);
     const nameIsUnknown = contact.name.startsWith('User +');
     const phoneNumber = extractPhoneNumber(senderJid);
     const groupMembersDirectory = isGroup ? buildGroupMembersDirectory(groupJid, phoneNumber) : "";
-    const channelKey = getChannelKey(isGroup, groupJid);
-    ensureChannelFields(contact);
-    const consentState = contact.crossChannelConsent[channelKey];
-    const otherLabels = getOtherChannelLabels(contact, channelKey);
-    let crossChannelNote = "";
-    if (otherLabels.length > 0) {
-        crossChannelNote = consentState === 'linked'
-            ? ` You've also talked to them in: ${otherLabels.join(', ')} - you may reference that if relevant.`
-            : ` They have other conversations with you elsewhere that have NOT been linked here - don't reference those.`;
-    }
-
     const userPrompt = (captionText && captionText.trim() !== "")
         ? captionText
         : "Describe what is in this image naturally in 1-2 casual sentences.";
-
     let reply = "😕 Failed to process that picture. Try sending it again?";
-
     async function callVision(maxTokens) {
         const whoText = nameIsUnknown
             ? "someone whose name you don't know - do not invent or guess a name or generic term of address for them, just talk naturally"
@@ -688,7 +649,7 @@ async function analyzeImageWithAI(imageBuffer, captionText, ownerName, senderJid
         const chatTypeText = isGroup
             ? "You are replying inside a GROUP CHAT, not a private DM - multiple people can see this."
             : "You are replying in a PRIVATE ONE-ON-ONE DM - no one else can see this.";
-        const promptText = `You are ${ownerName}'s WhatsApp assistant talking to human user ${whoText}.\n${chatTypeText}${crossChannelNote}${groupMembersDirectory}\nPrompt: ${userPrompt}\n\nRule: Keep your reply short, natural, direct, and under 2 sentences, in ${db.settings.aiLanguage} unless they wrote to you in another language. DO NOT include prefixes.`;
+        const promptText = `You are ${ownerName}'s WhatsApp assistant talking to human user ${whoText}.\n${chatTypeText}${groupMembersDirectory}\nPrompt: ${userPrompt}\n\nRule: Keep your reply short, natural, direct, and under 2 sentences, in ${db.settings.aiLanguage} unless they wrote to you in another language. DO NOT include prefixes.`;
         const base64Image = `data:${mimeType};base64,${imageBuffer.toString("base64")}`;
         const res = await axios.post(
             'https://openrouter.ai/api/v1/chat/completions',
@@ -717,7 +678,6 @@ async function analyzeImageWithAI(imageBuffer, captionText, ownerName, senderJid
         );
         return res.data?.choices?.[0]?.message?.content?.trim();
     }
-
     try {
         let visionReply = await callVision(300);
         if (!visionReply) {
@@ -733,15 +693,49 @@ async function analyzeImageWithAI(imageBuffer, captionText, ownerName, senderJid
     } catch (err) {
         console.error("OpenRouter Vision Error:", err.response?.data || err.message);
     }
-
-    contact.history.push({ role: 'user', content: `[Sent an image with caption: "${userPrompt}"]`, channel: channelKey });
-    contact.history.push({ role: 'assistant', content: reply, channel: channelKey });
+    contact.history.push({ role: 'user', content: `[Sent an image with caption: "${userPrompt}"]` });
+    contact.history.push({ role: 'assistant', content: reply });
     if (contact.history.length > 10) contact.history.shift();
     saveDB();
-
     return reply;
 }
-
+// ===== VIEW-ONCE / WRAPPER RECURSIVE UNWRAPPER =====
+function deepUnwrapMessage(message) {
+    if (!message) return message;
+    let current = message;
+    let guard = 0;
+    while (guard < 10) {
+        const next = current.ephemeralMessage?.message
+            || current.viewOnceMessage?.message
+            || current.viewOnceMessageV2?.message
+            || current.viewOnceMessageV2Extension?.message
+            || current.documentWithCaptionMessage?.message;
+        if (!next) break;
+        current = next;
+        guard++;
+    }
+    return current;
+}
+// ===== STICKER EXIF TAGGING ENGINE (used by !steal, Mr Man pack) =====
+async function writeExifToWebp(webpBuffer, packName, authorName) {
+    const img = new webpmux.Image();
+    await img.load(webpBuffer);
+    const json = {
+        'sticker-pack-id': 'com.mrman.assistant',
+        'sticker-pack-name': packName,
+        'sticker-pack-publisher': authorName,
+        'emojis': ['🤖']
+    };
+    const exifAttr = Buffer.from([
+        0x49, 0x49, 0x2A, 0x00, 0x08, 0x00, 0x00, 0x00, 0x01, 0x00,
+        0x41, 0x57, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x16, 0x00, 0x00, 0x00
+    ]);
+    const jsonBuffer = Buffer.from(JSON.stringify(json), 'utf-8');
+    const exif = Buffer.concat([exifAttr, jsonBuffer]);
+    exif.writeUIntLE(jsonBuffer.length, 14, 4);
+    img.exif = exif;
+    return await img.save(null);
+}
 // ===== MAIN ENGINE =====
 async function startSuperiorAssistant() {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info');
@@ -753,7 +747,6 @@ async function startSuperiorAssistant() {
         browser: Browsers.ubuntu('Chrome'),
         printQRInTerminal: false
     });
-
     if (!sock.authState.creds.registered) {
         console.log("\n==================================");
         console.log(" SUPERIOR AI ASSISTANT SETUP ");
@@ -771,9 +764,7 @@ async function startSuperiorAssistant() {
             }
         }, 3000);
     }
-
     sock.ev.on('creds.update', saveCreds);
-
     sock.ev.on('connection.update', ({ connection, lastDisconnect }) => {
         if (connection === 'close') {
             const shouldReconnect = (lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut);
@@ -781,26 +772,30 @@ async function startSuperiorAssistant() {
             if (shouldReconnect) startSuperiorAssistant();
         } else if (connection === 'open') {
             console.log('\x1b[36m%s\x1b[0m', '✅ WhatsApp Assistant Active!\n');
+            (async () => {
+                try {
+                    await sock.updateStatusPrivacy('all');
+                    console.log('[Privacy] About/status visibility set to: everyone');
+                } catch (e) {
+                    console.error('[Privacy] Failed to set About visibility to everyone:', e.message);
+                }
+            })();
             startPresencePatternLoop(sock);
             maybeUpdateDailyBio(sock);
             setInterval(() => maybeUpdateDailyBio(sock), 30 * 60 * 1000);
         }
     });
-
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         if (type !== 'notify') return;
-
         for (const msg of messages) {
             const msgId = msg.key.id;
             const jid = msg.key.remoteJid;
             if (!msg.message || jid === 'status@broadcast') continue;
-
             const isGroup = jid.endsWith('@g.us');
             const rawSender = isGroup ? (msg.key.participant || jid) : jid;
             const pushName = msg.pushName || "Unknown";
             const time = ngLocaleTimeString(new Date(msg.messageTimestamp * 1000));
             const cleanSenderJid = normalizeJid(rawSender);
-
             const botJid = sock.user?.id || "";
             const botPhone = extractPhoneNumber(botJid);
             const rawSockName = sock.user?.name || "";
@@ -809,15 +804,14 @@ async function startSuperiorAssistant() {
                 defaultOwnerName = rawSockName;
             }
             const ownerName = db.settings.customOwnerName || defaultOwnerName;
-
-            const contactRecord = updateContactMemory(cleanSenderJid, pushName, isGroup ? jid : null, rawSockName || defaultOwnerName);
-
+            const ownerPhoneNumber = db.settings.customOwnerNumber || botPhone;
             const isFromMe = msg.key.fromMe;
-
-            const unwrapMessage = msg.message.viewOnceMessage?.message
-                || msg.message.viewOnceMessageV2?.message
-                || msg.message;
-
+            // ===== BLACKLIST ENFORCEMENT ENGINE =====
+            if (!isFromMe && db.settings.blacklist && db.settings.blacklist.includes(extractPhoneNumber(cleanSenderJid))) {
+                continue;
+            }
+            updateContactMemory(cleanSenderJid, pushName, isGroup ? jid : null, rawSockName || defaultOwnerName);
+            const unwrapMessage = deepUnwrapMessage(msg.message);
             let text = msg.message?.conversation
                 || msg.message?.extendedTextMessage?.text
                 || msg.message?.imageMessage?.caption
@@ -827,7 +821,6 @@ async function startSuperiorAssistant() {
                 || unwrapMessage?.conversation
                 || unwrapMessage?.extendedTextMessage?.text
                 || "";
-
             const contextInfo = msg.message?.extendedTextMessage?.contextInfo
                 || msg.message?.ephemeralMessage?.message?.extendedTextMessage?.contextInfo
                 || msg.message?.viewOnceMessage?.message?.extendedTextMessage?.contextInfo
@@ -837,7 +830,6 @@ async function startSuperiorAssistant() {
                 || msg.message?.imageMessage?.contextInfo
                 || msg.message?.videoMessage?.contextInfo
                 || {};
-
             if (contextInfo && contextInfo.quotedMessage) {
                 const quotedUnwrapped = contextInfo.quotedMessage.viewOnceMessage?.message
                     || contextInfo.quotedMessage.viewOnceMessageV2?.message
@@ -850,16 +842,17 @@ async function startSuperiorAssistant() {
                     text = `[Replying to: "${quotedText}"] ${text}`;
                 }
             }
-
             const lowerText = text.toLowerCase().trim();
-
             // ===== OWNER COMMAND CONTROLS (Accepts ! and .) =====
             if (isFromMe && (text.startsWith('!') || text.startsWith('.'))) {
                 const args = text.slice(1).trim().split(' ');
-                const command = args[0].toLowerCase();
-                const subInput = args.slice(1).join(' ').trim();
+                let command = args[0].toLowerCase();
+                let subInput = args.slice(1).join(' ').trim();
+                if (command === 'owner' && args[1] && args[1].toLowerCase() === 'number') {
+                    command = 'ownernumber';
+                    subInput = args.slice(2).join(' ').trim();
+                }
                 let commandHandled = false;
-
                 if (command === 'bot') {
                     commandHandled = true;
                     if (subInput.toLowerCase() === 'on') {
@@ -875,7 +868,6 @@ async function startSuperiorAssistant() {
                     const statusText = db.settings.botActive ? "ACTIVE ✅" : "INACTIVE ❌";
                     return sock.sendMessage(jid, { text: `🤖 Bot Status: *${statusText}*\n\n_Usage: \`!bot on\` | \`!bot off\`_` });
                 }
-
                 if (command === 'voice') {
                     commandHandled = true;
                     if (subInput.toLowerCase() === 'on') {
@@ -891,7 +883,6 @@ async function startSuperiorAssistant() {
                     const vStatus = db.settings.voiceMode ? "ENABLED 🎙" : "DISABLED 💬";
                     return sock.sendMessage(jid, { text: `🎙 Voice Mode: *${vStatus}*\n\n_Usage: \`!voice on\` | \`!voice off\`_` });
                 }
-
                 if (command === 'groupchat') {
                     commandHandled = true;
                     if (subInput.toLowerCase() === 'on') {
@@ -907,7 +898,6 @@ async function startSuperiorAssistant() {
                     const gStatus = db.settings.groupChatMode ? "ACTIVE ✅" : "INACTIVE ❌";
                     return sock.sendMessage(jid, { text: `👥 Group Chat Mode: *${gStatus}*\n\n_Usage: \`!groupchat on\` | \`!groupchat off\`_` });
                 }
-
                 if (command === 'business') {
                     commandHandled = true;
                     if (subInput.toLowerCase() === 'on') {
@@ -931,7 +921,6 @@ async function startSuperiorAssistant() {
                     const profile = db.settings.businessInfo || "None set";
                     return sock.sendMessage(jid, { text: `💼 *Business Mode:* ${stateVal}\n*Current Details:* ${profile}\n\n_Usage: \`!business set <text>\`, \`!business on\`, \`!business off\`_` });
                 }
-
                 if (command === 'prices' || command === 'price') {
                     commandHandled = true;
                     if (subInput.toLowerCase().startsWith('set ')) {
@@ -948,7 +937,6 @@ async function startSuperiorAssistant() {
                     const currentPrices = db.settings.pricesInfo || "No pricing set.";
                     return sock.sendMessage(jid, { text: `💰 *Current Prices & Products:*\n${currentPrices}\n\n_Usage: \`!prices set <details>\`, \`!prices clear\`_` });
                 }
-
                 if (command === 'location') {
                     commandHandled = true;
                     if (subInput.toLowerCase().startsWith('set ')) {
@@ -965,7 +953,6 @@ async function startSuperiorAssistant() {
                     const currentLoc = db.settings.locationInfo || "No location set.";
                     return sock.sendMessage(jid, { text: `📍 *Current Location:*\n${currentLoc}\n\n_Usage: \`!location set <address>\`, \`!location clear\`_` });
                 }
-
                 if (command === 'owner') {
                     commandHandled = true;
                     if (subInput.toLowerCase().startsWith('set ')) {
@@ -980,9 +967,37 @@ async function startSuperiorAssistant() {
                         return sock.sendMessage(jid, { text: "👑 *Custom Owner Name Cleared!* Reverted to fallback name." });
                     }
                     const activeOwner = db.settings.customOwnerName || defaultOwnerName;
-                    return sock.sendMessage(jid, { text: `👑 *Current Owner Name:* ${activeOwner}\n\n_Usage: \`!owner set <new name>\`, \`!owner clear\`_` });
+                    return sock.sendMessage(jid, { text: `👑 *Current Owner Name:* ${activeOwner}\n\n_Usage: \`!owner set <new name>\`, \`!owner clear\`_\n_(To change the owner's number instead, use \`!owner number <value>\` or \`!ownernumber\`.)_` });
                 }
-
+                if (command === 'ownernumber') {
+                    commandHandled = true;
+                    const subLower = subInput.toLowerCase();
+                    if (subLower === 'clear') {
+                        db.settings.customOwnerNumber = "";
+                        saveDB();
+                        return sock.sendMessage(jid, { text: "📞 *Custom Owner Number Cleared!* Reverted to this WhatsApp account's own number." });
+                    }
+                    if (subLower.startsWith('set ')) {
+                        const newOwnerNumber = subInput.slice(4).replace(/[^0-9]/g, "");
+                        if (!newOwnerNumber) {
+                            return sock.sendMessage(jid, { text: "⚠️ Usage: `!ownernumber set <number>` e.g. `!ownernumber set 2349135615687`" });
+                        }
+                        db.settings.customOwnerNumber = newOwnerNumber;
+                        saveDB();
+                        return sock.sendMessage(jid, { text: `📞 *Owner Number Overwritten Successfully!*\nNew Owner Number: *+${newOwnerNumber}*` });
+                    }
+                    if (subInput.trim() !== '') {
+                        const newOwnerNumber = subInput.replace(/[^0-9]/g, "");
+                        if (!newOwnerNumber) {
+                            return sock.sendMessage(jid, { text: "⚠️ Usage: `!ownernumber set <number>` or just `!ownernumber <number>` e.g. `!ownernumber 2349135615687`" });
+                        }
+                        db.settings.customOwnerNumber = newOwnerNumber;
+                        saveDB();
+                        return sock.sendMessage(jid, { text: `📞 *Owner Number Overwritten Successfully!*\nNew Owner Number: *+${newOwnerNumber}*` });
+                    }
+                    const activeOwnerNumber = db.settings.customOwnerNumber || botPhone;
+                    return sock.sendMessage(jid, { text: `📞 *Current Owner Number:* +${activeOwnerNumber}\n\n_Usage: \`!ownernumber <number>\`, \`!ownernumber set <number>\`, \`!ownernumber clear\`_` });
+                }
                 if (command === 'py') {
                     commandHandled = true;
                     if (!subInput) {
@@ -996,7 +1011,6 @@ async function startSuperiorAssistant() {
                         return sock.sendMessage(jid, { text: `🐍 Python Execution Error:\n${err}` });
                     }
                 }
-
                 if (command === 'lang' || command === 'language') {
                     commandHandled = true;
                     const sub = subInput.trim();
@@ -1021,7 +1035,6 @@ async function startSuperiorAssistant() {
                         return sock.sendMessage(jid, { text: `❌ Couldn't recognize "*${target}*" as a supported language.\n\n*Available Languages:*\n${listStr}\n\n_Usage: \`!lang <language>\`, e.g. \`!lang yoruba\`_` });
                     }
                 }
-
                 if (command === 'hidetag') {
                     commandHandled = true;
                     if (!isGroup) {
@@ -1041,7 +1054,6 @@ async function startSuperiorAssistant() {
                     }
                     continue;
                 }
-
                 if (command === 'listonline') {
                     commandHandled = true;
                     if (!isGroup) {
@@ -1091,7 +1103,6 @@ async function startSuperiorAssistant() {
                     }
                     continue;
                 }
-
                 if (command === 'svcontact') {
                     commandHandled = true;
                     if (!isGroup) {
@@ -1123,7 +1134,6 @@ async function startSuperiorAssistant() {
                     }
                     continue;
                 }
-
                 if (command === 'memories') {
                     commandHandled = true;
                     let memoryList = "*🧠 BOT MEMORY VAULT (TRACKED CONTACTS)*\n\n";
@@ -1133,20 +1143,16 @@ async function startSuperiorAssistant() {
                     } else {
                         contacts.forEach(phone => {
                             const c = db.contacts[phone];
-                            ensureChannelFields(c);
-                            const channelCount = Object.keys(c.channelsSeen).length;
                             memoryList += `👤 *${c.name}* (+${phone})\n`;
                             if (c.nickname) memoryList += `   🏷 Nickname: ${c.nickname}\n`;
                             if (c.notes) memoryList += `   📝 Owner Notes: ${c.notes}\n`;
                             memoryList += `   💗 Mood: ${c.mood || 'neutral'} | Bond: ${c.bondScore || 0}/10\n`;
-                            memoryList += `   🔗 Channels seen in: ${channelCount || 1}\n`;
                             memoryList += `   🕒 Last Active: ${ngLocaleTimeString(new Date(c.lastSeen))}\n\n`;
                         });
                     }
                     await simulateHumanTyping(sock, jid, memoryList);
                     return sock.sendMessage(jid, { text: memoryList });
                 }
-
                 if (command === 'remember') {
                     commandHandled = true;
                     const phoneMatch = subInput.match(/^(\d+)\s*/);
@@ -1177,13 +1183,10 @@ async function startSuperiorAssistant() {
                             notes: note,
                             mood: "neutral",
                             bondScore: 0,
-                            history: [],
-                            channelsSeen: {},
-                            crossChannelConsent: {},
-                            pendingConsentChannel: null
+                            lastAfkNotified: "",
+                            history: []
                         };
                     } else {
-                        ensureChannelFields(db.contacts[phone]);
                         if (nickname) {
                             db.contacts[phone].nickname = nickname;
                             if (db.contacts[phone].name.startsWith('User +')) {
@@ -1195,7 +1198,6 @@ async function startSuperiorAssistant() {
                     saveDB();
                     return sock.sendMessage(jid, { text: `✅ Saved for +${phone}:\n${nickname ? `Name/Nickname: "${nickname}"\n` : ""}${note ? `Note: "${note}"` : ""}` });
                 }
-
                 if (command === 'history') {
                     commandHandled = true;
                     const phone = subInput.replace(/[^0-9]/g, "");
@@ -1210,12 +1212,11 @@ async function startSuperiorAssistant() {
                     if (!c.history || c.history.length === 0) {
                         historyOutput += "No recent chat logs recorded.";
                     } else {
-                        historyOutput += c.history.map(h => `[${h.channel || 'unknown'}] ${h.role === 'user' ? 'User' : 'Assistant'}: ${h.content}`).join('\n');
+                        historyOutput += c.history.map(h => `${h.role === 'user' ? 'User' : 'Assistant'}: ${h.content}`).join('\n');
                     }
                     await simulateHumanTyping(sock, jid, historyOutput);
                     return sock.sendMessage(jid, { text: historyOutput });
                 }
-
                 if (command === 'wipe') {
                     commandHandled = true;
                     try {
@@ -1231,10 +1232,17 @@ async function startSuperiorAssistant() {
                                 pricesInfo: "",
                                 locationInfo: "",
                                 customOwnerName: "",
+                                customOwnerNumber: "",
                                 aiLanguage: "English",
                                 assistantMood: "",
                                 assistantMoodDate: "",
-                                lastBioUpdateDate: ""
+                                lastBioUpdateDate: "",
+                                blacklist: [],
+                                afkActive: false,
+                                afkReason: "",
+                                afkSince: "",
+                                ttsVoice: "en-US-AndrewNeural",
+                                antispamActive: true
                             }
                         };
                         saveDB();
@@ -1243,7 +1251,6 @@ async function startSuperiorAssistant() {
                         return sock.sendMessage(jid, { text: `❌ Wipe Error:\n${err}` });
                     }
                 }
-
                 if (command === 'status' || command === 'sys') {
                     commandHandled = true;
                     try {
@@ -1252,13 +1259,232 @@ async function startSuperiorAssistant() {
                         const mins = Math.floor((uptimeSecs % 3600) / 60);
                         const memoryUsage = process.memoryUsage().heapUsed / 1024 / 1024;
                         const timeCtx = getTimeContext();
-                        const sysInfo = `📊 *SYSTEM STATUS REPORT*\n⏱️ Uptime: ${hours}h ${mins}m\n💾 RAM Heap: ${memoryUsage.toFixed(2)} MB\n👥 Saved Contacts: ${Object.keys(db.contacts).length}\n🤖 Bot Active: ${db.settings.botActive ? 'YES ✅' : 'NO ❌'}\n🎙 Voice Mode: ${db.settings.voiceMode ? 'ON 🎙' : 'OFF 💬'}\n👥 Group Chat Mode: ${db.settings.groupChatMode ? 'ON ✅' : 'OFF ❌'}\n💼 Business Mode: ${db.settings.businessActive ? 'ON ✅' : 'OFF ❌'}\n🌐 Language: ${db.settings.aiLanguage}\n💗 Assistant Mood Today: ${getAssistantMood()}\n🕒 Current Time (Nigeria): ${timeCtx.readable}\n📅 Full Date: ${timeCtx.dateStr}\n🪪 Last Bio Auto-Update: ${db.settings.lastBioUpdateDate || 'not yet'}`;
+                        const sysInfo = `📊 *SYSTEM STATUS REPORT*\n⏱️ Uptime: ${hours}h ${mins}m\n💾 RAM Heap: ${memoryUsage.toFixed(2)} MB\n👥 Saved Contacts: ${Object.keys(db.contacts).length}\n🤖 Bot Active: ${db.settings.botActive ? 'YES ✅' : 'NO ❌'}\n🎙 Voice Mode: ${db.settings.voiceMode ? 'ON 🎙' : 'OFF 💬'}\n👥 Group Chat Mode: ${db.settings.groupChatMode ? 'ON ✅' : 'OFF ❌'}\n💼 Business Mode: ${db.settings.businessActive ? 'ON ✅' : 'OFF ❌'}\n🌐 Language: ${db.settings.aiLanguage}\n👑 Owner Name: ${db.settings.customOwnerName || defaultOwnerName}\n📞 Owner Number: +${db.settings.customOwnerNumber || botPhone}\n💗 Assistant Mood Today: ${getAssistantMood()}\n🕒 Current Time (Nigeria): ${timeCtx.readable}\n📅 Full Date: ${timeCtx.dateStr}\n🪪 Last Bio Auto-Update: ${db.settings.lastBioUpdateDate || 'not yet'}\n🚫 Blacklisted Numbers: ${db.settings.blacklist.length}\n💤 AFK: ${db.settings.afkActive ? `ON ("${db.settings.afkReason}")` : 'OFF'}\n🎙 TTS Voice (Edge TTS): ${db.settings.ttsVoice}\n🛡 Duplicate Media Antispam: ${db.settings.antispamActive ? 'ON ✅' : 'OFF ❌'}`;
                         return sock.sendMessage(jid, { text: sysInfo });
                     } catch (e) {
                         return sock.sendMessage(jid, { text: "⚠️ Failed to fetch system status." });
                     }
                 }
-
+                if (command === 'vv') {
+                    commandHandled = true;
+                    const quotedId = contextInfo?.stanzaId;
+                    if (!quotedId) {
+                        return sock.sendMessage(jid, { text: "⚠️ Reply directly to a view-once photo, video, or voice note with `.vv` to unlock it." });
+                    }
+                    const savedMedia = messageStore.get(quotedId);
+                    if (!savedMedia || !savedMedia.isMedia || !savedMedia.filePath || !fs.existsSync(savedMedia.filePath)) {
+                        console.error(`[VV Error] No stored media found for stanzaId=${quotedId}. This usually means the media failed to download when it first arrived - check for a "[Media Download Error]" log around the time it was sent.`);
+                        return sock.sendMessage(jid, { text: "❌ Couldn't find that view-once media - it may have expired, already been opened, or wasn't saved." });
+                    }
+                    try {
+                        const buffer = fs.readFileSync(savedMedia.filePath);
+                        if (savedMedia.mediaType === 'imageMessage') {
+                            await sock.sendMessage(jid, { image: buffer, caption: "🔓 View-once photo unlocked" });
+                        } else if (savedMedia.mediaType === 'videoMessage' || savedMedia.mediaType === 'ptvMessage') {
+                            await sock.sendMessage(jid, { video: buffer, caption: "🔓 View-once video unlocked" });
+                        } else if (savedMedia.mediaType === 'audioMessage') {
+                            await sock.sendMessage(jid, { audio: buffer, mimetype: 'audio/ogg; codecs=opus', ptt: true });
+                        } else {
+                            await sock.sendMessage(jid, { document: buffer, fileName: 'unlocked_media', caption: "🔓 View-once media unlocked" });
+                        }
+                    } catch (err) {
+                        console.error("VV Error:", err.message);
+                        return sock.sendMessage(jid, { text: "❌ Failed to resend that view-once media." });
+                    }
+                    continue;
+                }
+                if (command === 'translate') {
+                    commandHandled = true;
+                    if (!subInput) {
+                        return sock.sendMessage(jid, { text: "⚠️ Usage: `!translate <language> <text>` or reply to a text message with `!translate <language>`" });
+                    }
+                    const firstSpaceIdx = subInput.indexOf(' ');
+                    let targetLangRaw = firstSpaceIdx === -1 ? subInput : subInput.slice(0, firstSpaceIdx);
+                    let textToTranslate = firstSpaceIdx === -1 ? "" : subInput.slice(firstSpaceIdx + 1).trim();
+                    if (!textToTranslate && contextInfo?.quotedMessage) {
+                        const quotedUnwrapped = deepUnwrapMessage(contextInfo.quotedMessage);
+                        textToTranslate = quotedUnwrapped.conversation || quotedUnwrapped.extendedTextMessage?.text || quotedUnwrapped.imageMessage?.caption || "";
+                    }
+                    if (!textToTranslate) {
+                        return sock.sendMessage(jid, { text: "⚠️ Usage: `!translate <language> <text>` or reply to a text message with `!translate <language>`" });
+                    }
+                    const matchKey = findClosestLanguage(targetLangRaw);
+                    const targetLangName = matchKey ? LANGUAGE_MAP[matchKey] : targetLangRaw;
+                    try {
+                        const res = await axios.post(
+                            'https://api.groq.com/openai/v1/chat/completions',
+                            {
+                                model: 'openai/gpt-oss-120b',
+                                messages: [
+                                    { role: 'system', content: `You are a precise translator. Translate the user's text into ${targetLangName}. Output ONLY the translated text, nothing else - no quotes, no explanations, no labels.` },
+                                    { role: 'user', content: textToTranslate }
+                                ],
+                                temperature: 0.3,
+                                max_tokens: 500
+                            },
+                            { headers: { 'Authorization': `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' } }
+                        );
+                        const translated = res.data?.choices?.[0]?.message?.content?.trim() || "";
+                        if (!translated) throw new Error("Empty translation");
+                        return sock.sendMessage(jid, { text: `🌐 *Translation (${targetLangName}):*\n${translated}` });
+                    } catch (err) {
+                        console.error("Translate Error:", err.response?.data || err.message);
+                        return sock.sendMessage(jid, { text: "❌ Failed to translate that text." });
+                    }
+                }
+                if (command === 'ttsvoice') {
+                    commandHandled = true;
+                    const subLower = subInput.toLowerCase().trim();
+                    if (!subLower || subLower === 'list') {
+                        return sock.sendMessage(jid, { text: `🎙 *TTS Voice (Edge TTS - natural neural voices)*\nCurrent: *${db.settings.ttsVoice}*\n\n*Available Voices:*\n${AVAILABLE_TTS_VOICES.join(', ')}\n\n_Usage: \`!ttsvoice <voice>\`, \`!ttsvoice reset\`_` });
+                    }
+                    if (subLower === 'reset' || subLower === 'default') {
+                        db.settings.ttsVoice = 'en-US-AndrewNeural';
+                        saveDB();
+                        return sock.sendMessage(jid, { text: "🎙 *TTS Voice reset to default:* en-US-AndrewNeural ✅" });
+                    }
+                    const matchedVoice = AVAILABLE_TTS_VOICES.find(v => v.toLowerCase() === subLower);
+                    if (!matchedVoice) {
+                        return sock.sendMessage(jid, { text: `❌ Unknown voice "*${subInput}*".\n\n*Available Voices:*\n${AVAILABLE_TTS_VOICES.join(', ')}` });
+                    }
+                    db.settings.ttsVoice = matchedVoice;
+                    saveDB();
+                    return sock.sendMessage(jid, { text: `🎙 *TTS Voice switched to:* ${matchedVoice} ✅\n_Try sending a message in Voice Mode to hear it._` });
+                }
+                if (command === 'poll') {
+                    commandHandled = true;
+                    if (!subInput.includes('|')) {
+                        return sock.sendMessage(jid, { text: "⚠️ Usage: `!poll <question> | option1 | option2 | option3...`\ne.g. `!poll What should we eat? | Pizza | Suya | Jollof`" });
+                    }
+                    const parts = subInput.split('|').map(p => p.trim()).filter(p => p.length > 0);
+                    const question = parts[0];
+                    const options = parts.slice(1);
+                    if (!question || options.length < 2) {
+                        return sock.sendMessage(jid, { text: "⚠️ A poll needs a question and at least 2 options.\nUsage: `!poll <question> | option1 | option2 | option3...`" });
+                    }
+                    if (options.length > 12) {
+                        return sock.sendMessage(jid, { text: "⚠️ WhatsApp polls support a maximum of 12 options." });
+                    }
+                    try {
+                        await sock.sendMessage(jid, {
+                            poll: {
+                                name: question,
+                                values: options,
+                                selectableCount: 1
+                            }
+                        });
+                    } catch (err) {
+                        console.error("Poll Error:", err.message);
+                        return sock.sendMessage(jid, { text: "❌ Failed to create that poll." });
+                    }
+                    continue;
+                }
+                if (command === 'blacklist') {
+                    commandHandled = true;
+                    const subLower = subInput.toLowerCase();
+                    if (subLower === 'list') {
+                        const list = db.settings.blacklist.length ? db.settings.blacklist.map(p => `+${p}`).join('\n') : 'No blacklisted numbers.';
+                        return sock.sendMessage(jid, { text: `🚫 *Blacklisted Numbers:*\n${list}` });
+                    }
+                    if (subLower.startsWith('remove ')) {
+                        const remPhone = subInput.slice(7).replace(/[^0-9]/g, "");
+                        db.settings.blacklist = db.settings.blacklist.filter(p => p !== remPhone);
+                        saveDB();
+                        return sock.sendMessage(jid, { text: `✅ Removed +${remPhone} from blacklist.` });
+                    }
+                    let targetPhone = "";
+                    const mentioned = contextInfo?.mentionedJid?.[0];
+                    const quotedParticipant = contextInfo?.participant;
+                    if (mentioned) {
+                        targetPhone = extractPhoneNumber(mentioned);
+                    } else if (quotedParticipant) {
+                        targetPhone = extractPhoneNumber(quotedParticipant);
+                    } else if (!isGroup && subInput.trim()) {
+                        targetPhone = subInput.replace(/[^0-9]/g, "");
+                    }
+                    if (!targetPhone) {
+                        return sock.sendMessage(jid, { text: isGroup
+                            ? "⚠️ Usage: @mention someone or reply to their message with `!blacklist`."
+                            : "⚠️ Usage: `!blacklist <number>` e.g. `!blacklist 2349135615687`\n_Other: `!blacklist list`, `!blacklist remove <number>`_" });
+                    }
+                    if (!db.settings.blacklist.includes(targetPhone)) {
+                        db.settings.blacklist.push(targetPhone);
+                        saveDB();
+                    }
+                    return sock.sendMessage(jid, { text: `🚫 *+${targetPhone} has been blacklisted.* The assistant will now fully ignore this number.` });
+                }
+                if (command === 'afk') {
+                    commandHandled = true;
+                    const subLower = subInput.toLowerCase();
+                    if (subLower === 'clear' || subLower === 'off') {
+                        db.settings.afkActive = false;
+                        db.settings.afkReason = "";
+                        saveDB();
+                        return sock.sendMessage(jid, { text: "✅ *AFK status cleared.* Welcome back!" });
+                    }
+                    db.settings.afkActive = true;
+                    db.settings.afkReason = subInput.trim() || "no reason given";
+                    db.settings.afkSince = new Date().toISOString();
+                    saveDB();
+                    return sock.sendMessage(jid, { text: `💤 *AFK Mode Activated*\nReason: "${db.settings.afkReason}"\n_The assistant will let people know you're away when relevant. Use \`!afk clear\` when you're back._` });
+                }
+                if (command === 'antispam') {
+                    commandHandled = true;
+                    if (subInput.toLowerCase() === 'on') {
+                        db.settings.antispamActive = true;
+                        saveDB();
+                        return sock.sendMessage(jid, { text: "🛡 *Duplicate Media Antispam:* ACTIVATED ✅ (repeated stickers/photos/videos in groups get deleted, warned, then kicked after 3 strikes)" });
+                    }
+                    if (subInput.toLowerCase() === 'off') {
+                        db.settings.antispamActive = false;
+                        saveDB();
+                        return sock.sendMessage(jid, { text: "🛡 *Duplicate Media Antispam:* DEACTIVATED ❌" });
+                    }
+                    const aStatus = db.settings.antispamActive ? "ACTIVE ✅" : "INACTIVE ❌";
+                    return sock.sendMessage(jid, { text: `🛡 Duplicate Media Antispam: *${aStatus}*\n\n_Usage: \`!antispam on\` | \`!antispam off\`_` });
+                }
+                if (command === 'steal') {
+                    commandHandled = true;
+                    const quoted = contextInfo?.quotedMessage;
+                    if (!quoted) {
+                        return sock.sendMessage(jid, { text: "⚠️ Reply to a sticker, image, or video with `!steal` to grab it." });
+                    }
+                    const quotedUnwrapped = deepUnwrapMessage(quoted);
+                    const stealType = quotedUnwrapped.stickerMessage ? 'sticker'
+                        : quotedUnwrapped.imageMessage ? 'image'
+                        : (quotedUnwrapped.videoMessage ? 'video' : null);
+                    if (!stealType) {
+                        return sock.sendMessage(jid, { text: "⚠️ That's not a sticker, image, or video I can steal." });
+                    }
+                    let tempInPath = null;
+                    let tempOutPath = null;
+                    try {
+                        const stream = await downloadContentFromMessage(quotedUnwrapped[`${stealType}Message`], stealType);
+                        let bufferChunks = [];
+                        for await (const chunk of stream) bufferChunks.push(chunk);
+                        const mediaBuffer = Buffer.concat(bufferChunks);
+                        let finalStickerBuffer;
+                        if (stealType === 'sticker') {
+                            finalStickerBuffer = mediaBuffer;
+                        } else {
+                            const inExt = stealType === 'video' ? 'mp4' : 'jpg';
+                            tempInPath = path.join(downloadDir, `steal_in_${Date.now()}.${inExt}`);
+                            tempOutPath = path.join(downloadDir, `steal_out_${Date.now()}.webp`);
+                            fs.writeFileSync(tempInPath, mediaBuffer);
+                            await runSystemCommand(`ffmpeg -i "${tempInPath}" -vcodec libwebp -filter:v "fps=15,scale=512:512:force_original_aspect_ratio=decrease,pad=512:512:-1:-1:color=white@0.0" -lossless 0 -compression_level 6 -q:v 50 -loop 0 -preset default -an -vsync 0 "${tempOutPath}" -y`);
+                            finalStickerBuffer = fs.readFileSync(tempOutPath);
+                        }
+                        const taggedBuffer = await writeExifToWebp(finalStickerBuffer, "Mr Man", ownerName);
+                        await sock.sendMessage(jid, { sticker: taggedBuffer });
+                    } catch (err) {
+                        console.error("Steal Sticker Error:", err.message);
+                        return sock.sendMessage(jid, { text: "❌ Failed to steal that sticker." });
+                    } finally {
+                        if (tempInPath && fs.existsSync(tempInPath)) fs.unlinkSync(tempInPath);
+                        if (tempOutPath && fs.existsSync(tempOutPath)) fs.unlinkSync(tempOutPath);
+                    }
+                    continue;
+                }
                 if (!commandHandled) {
                     const fallbackHelp = `⚠️ *Unrecognized Command:* \`${command}\`
 Available Commands:
@@ -1269,6 +1495,7 @@ Available Commands:
 💰 *!prices* - \`set <details>\` | \`clear\`
 📍 *!location* - \`set <address>\` | \`clear\`
 👑 *!owner* - \`set <new name>\` | \`clear\`
+📞 *!ownernumber* - \`<number>\` | \`set <number>\` | \`clear\` (alias: \`!owner number ...\`)
 🐍 *!py* - \`<python code>\`
 🌐 *!lang* - \`<language>\` | \`list\` | \`reset\`
 📢 *!hidetag* - \`<message>\`
@@ -1278,11 +1505,18 @@ Available Commands:
 📊 *!status* - Check system uptime & memory
 🧠 *!memories* - View saved contacts list
 📝 *!remember* - \`<phone_number> <nickname> | <note>\`
-📜 *!history* - \`<phone_number>\``;
+📜 *!history* - \`<phone_number>\`
+🔓 *!vv* - Reply to a view-once photo/video/voice note to unlock it
+🌐 *!translate* - \`<language> <text>\` or reply to a message
+🎙 *!ttsvoice* - \`<voice>\` | \`list\` | \`reset\` (Edge TTS neural voices)
+📊 *!poll* - \`<question> | option1 | option2 ...\`
+🚫 *!blacklist* - @mention/reply in groups, \`<number>\` in DM | \`list\` | \`remove <number>\`
+💤 *!afk* - \`<reason>\` | \`clear\`
+🛡 *!antispam* - \`on\` | \`off\` (duplicate media auto-delete + warn + kick in groups)
+🥷 *!steal* - reply to a sticker/image/video to steal it as a "Mr Man" sticker`;
                     return sock.sendMessage(jid, { text: fallbackHelp });
                 }
             }
-
             // ===== DELETED MESSAGE DETECTOR =====
             if (msg.message.protocolMessage && msg.message.protocolMessage.type === 0) {
                 const deletedId = msg.message.protocolMessage.key.id;
@@ -1301,7 +1535,6 @@ Available Commands:
                 console.log('-----------------------------------');
                 continue;
             }
-
             // ===== AUTO-SAVE MEDIA & AUDIO TRANSCRIBER =====
             const mediaType = Object.keys(unwrapMessage).find(key =>
                 ['imageMessage', 'videoMessage', 'audioMessage', 'stickerMessage', 'documentMessage', 'ptvMessage'].includes(key)
@@ -1317,27 +1550,91 @@ Available Commands:
                 else if (mediaType === 'stickerMessage') ext = 'webp';
                 else if (mediaType === 'audioMessage') ext = 'ogg';
                 try {
-                    downloadedBuffer = await downloadMediaMessage(
-                        msg,
-                        'buffer',
-                        {},
-                        { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage }
-                    );
+                    // FIX (.vv always failing): the old code called downloadMediaMessage(msg, ...)
+                    // with the RAW top-level message object. For view-once media the actual
+                    // image/video/audio node lives nested inside viewOnceMessage(V2)/ephemeralMessage
+                    // wrappers, and depending on the installed Baileys version's internal content-type
+                    // detection, that nested media can get missed or mis-typed, causing the download to
+                    // silently throw - which is exactly why .vv always reported "no stored media found"
+                    // even on media that had never been opened yet. We now pull the ALREADY-unwrapped
+                    // media node (unwrapMessage[mediaType], the same one used to detect mediaType above)
+                    // and download it directly with downloadContentFromMessage - the same low-level,
+                    // proven-working method the !steal command already uses successfully.
+                    const mediaMessageObj = unwrapMessage[mediaType];
+                    const shortType = mediaType === 'ptvMessage' ? 'video' : mediaType.replace('Message', '');
+                    const stream = await downloadContentFromMessage(mediaMessageObj, shortType);
+                    const chunks = [];
+                    for await (const chunk of stream) chunks.push(chunk);
+                    downloadedBuffer = Buffer.concat(chunks);
                     const filename = `WA_${Date.now()}.${ext}`;
                     const filePath = path.join(downloadDir, filename);
                     fs.writeFileSync(filePath, downloadedBuffer);
-                    messageStore.set(msgId, { isMedia: true, filePath });
+                    messageStore.set(msgId, { isMedia: true, filePath, mediaType });
                     if (mediaType === 'audioMessage' && downloadedBuffer) {
                         const transcribedSpeech = await transcribeAudio(downloadedBuffer);
                         if (transcribedSpeech) {
                             text = `[Voice Note Transcribed]: ${transcribedSpeech}`;
                         }
                     }
-                } catch (e) {}
+                } catch (e) {
+                    console.error(`[Media Download Error] type=${mediaType} msgId=${msgId} from=${pushName} (+${extractPhoneNumber(cleanSenderJid)}):`, e.message || e);
+                }
             }
-
             if (text) messageStore.set(msgId, { isMedia: false, text });
-
+            // ===== DUPLICATE MEDIA ANTISPAM ENGINE =====
+            if (db.settings.antispamActive && isGroup && !isFromMe && downloadedBuffer && ['imageMessage', 'videoMessage', 'stickerMessage'].includes(mediaType)) {
+                try {
+                    if (!db.groups[jid]) db.groups[jid] = { members: {}, warnings: {} };
+                    if (!db.groups[jid].mediaSpam) db.groups[jid].mediaSpam = {};
+                    if (!db.groups[jid].mediaWarnings) db.groups[jid].mediaWarnings = {};
+                    const senderPhone = extractPhoneNumber(cleanSenderJid);
+                    const contentHash = crypto.createHash('md5').update(downloadedBuffer).digest('hex');
+                    const tracker = db.groups[jid].mediaSpam[senderPhone] || { hash: "", count: 0 };
+                    if (tracker.hash === contentHash) {
+                        tracker.count += 1;
+                    } else {
+                        tracker.hash = contentHash;
+                        tracker.count = 1;
+                    }
+                    db.groups[jid].mediaSpam[senderPhone] = tracker;
+                    if (tracker.count >= 3) {
+                        await sock.sendMessage(jid, { delete: msg.key }).catch(() => {});
+                        const currentWarnings = (db.groups[jid].mediaWarnings[senderPhone] || 0) + 1;
+                        db.groups[jid].mediaWarnings[senderPhone] = currentWarnings;
+                        db.groups[jid].mediaSpam[senderPhone] = { hash: "", count: 0 };
+                        saveDB();
+                        if (currentWarnings >= 3) {
+                            try {
+                                const metadata = await sock.groupMetadata(jid);
+                                const targetParticipant = (metadata.participants || []).find(p => extractPhoneNumber(p.id) === senderPhone);
+                                const targetJid = targetParticipant ? targetParticipant.id : cleanSenderJid;
+                                await sock.groupParticipantsUpdate(jid, [targetJid], 'remove');
+                                await sock.sendMessage(jid, {
+                                    text: `🚫 @${senderPhone} was removed for repeatedly flooding duplicate media (3/3 warnings).`,
+                                    mentions: [cleanSenderJid]
+                                });
+                                delete db.groups[jid].mediaWarnings[senderPhone];
+                                saveDB();
+                            } catch (kickErr) {
+                                console.error("Media Spam Kick Error:", kickErr.message || kickErr);
+                                await sock.sendMessage(jid, {
+                                    text: `⚠️ Failed to remove @${senderPhone}. Error: ${kickErr.message || kickErr}`,
+                                    mentions: [cleanSenderJid]
+                                });
+                            }
+                        } else {
+                            await sock.sendMessage(jid, {
+                                text: `⚠️ Please stop flooding duplicate media @${senderPhone}! Warning ${currentWarnings}/3`,
+                                mentions: [cleanSenderJid]
+                            });
+                        }
+                    } else {
+                        saveDB();
+                    }
+                } catch (err) {
+                    console.error("Media Antispam Error:", err.message);
+                }
+            }
             // ===== BULLET-PROOF GROUP TAG & MENTION MATCHER =====
             let isBotTagged = false;
             if (isGroup) {
@@ -1365,70 +1662,9 @@ Available Commands:
                     console.log(`[Group tag debug] TAGGED via ${isJidMentioned ? 'mention' : isTextMentioned ? 'text' : 'reply'}`);
                 }
             }
-
             // ===== DIRECT MESSAGES & VERIFIED GROUP TAGS ENGINE =====
             if (!isGroup || (isGroup && isBotTagged && db.settings.groupChatMode)) {
                 if (!db.settings.botActive) continue;
-
-                const senderPhoneForChannel = extractPhoneNumber(cleanSenderJid);
-                const channelKey = getChannelKey(isGroup, jid);
-                ensureChannelFields(contactRecord);
-
-                // ===== CROSS-CHANNEL CONSENT: resolve a pending yes/no answer first =====
-                if (contactRecord.pendingConsentChannel === channelKey) {
-                    const saidYes = /\b(yes|yeah|yep|yup|sure|ok|okay|please|go ahead|continue|link|bring it|do it)\b/i.test(lowerText);
-                    const saidNo = /\b(no|nah|nope|don'?t|separate|different|keep it separate|leave it)\b/i.test(lowerText);
-                    if (saidYes) {
-                        contactRecord.crossChannelConsent[channelKey] = 'linked';
-                        contactRecord.pendingConsentChannel = null;
-                        saveDB();
-                        const confirmMsg = "got it, picking up where we left off then 🙂";
-                        await simulateHumanTyping(sock, jid, confirmMsg, msg.key);
-                        await sendHumanLikeMessage(sock, jid, confirmMsg, isGroup, msg);
-                        continue;
-                    } else if (saidNo) {
-                        contactRecord.crossChannelConsent[channelKey] = 'declined';
-                        contactRecord.pendingConsentChannel = null;
-                        saveDB();
-                        const confirmMsg = "no worries, keeping this separate 👍";
-                        await simulateHumanTyping(sock, jid, confirmMsg, msg.key);
-                        await sendHumanLikeMessage(sock, jid, confirmMsg, isGroup, msg);
-                        continue;
-                    } else {
-                        // Unclear answer - default to keeping channels separate (privacy-first),
-                        // don't keep re-asking, and fall through to process their actual message.
-                        contactRecord.crossChannelConsent[channelKey] = 'declined';
-                        contactRecord.pendingConsentChannel = null;
-                        saveDB();
-                    }
-                }
-
-                // ===== CROSS-CHANNEL CONSENT: offer to bridge if this is a brand-new channel for a known contact =====
-                const isNewChannel = !contactRecord.channelsSeen[channelKey];
-                const hasOtherChannels = Object.keys(contactRecord.channelsSeen).some(k => k !== channelKey);
-                const alreadyDecided = !!contactRecord.crossChannelConsent[channelKey];
-
-                if (isNewChannel && hasOtherChannels && !alreadyDecided && contactRecord.history && contactRecord.history.length > 0) {
-                    const label = isGroup ? await getGroupLabel(sock, jid) : 'DM';
-                    const otherLabels = getOtherChannelLabels(contactRecord, channelKey);
-                    registerChannelSeen(contactRecord, channelKey, label);
-                    contactRecord.pendingConsentChannel = channelKey;
-                    saveDB();
-                    const askMsg = `hey, I remember us talking${otherLabels.length ? ` in ${otherLabels.join(', ')}` : ' elsewhere'} — want me to bring that conversation here, or keep this one separate?`;
-                    await simulateHumanTyping(sock, jid, askMsg, msg.key);
-                    await sendHumanLikeMessage(sock, jid, askMsg, isGroup, msg);
-                    continue;
-                }
-
-                // Normal channel registration (first channel ever, or consent already decided)
-                if (isNewChannel) {
-                    const label = isGroup ? (db.groups[jid]?.subject || 'a group chat') : 'DM';
-                    registerChannelSeen(contactRecord, channelKey, label);
-                    saveDB();
-                } else {
-                    registerChannelSeen(contactRecord, channelKey);
-                }
-
                 let cleanedText = text;
                 if (isGroup) {
                     cleanedText = text.replace(new RegExp(`@${extractPhoneNumber(botJid)}|@\\d+`, 'g'), '').trim();
@@ -1436,22 +1672,30 @@ Available Commands:
                         cleanedText = "[They just tagged you with no additional message - greet them casually and ask what they need]";
                     }
                 }
-
                 let finalReply = "";
                 if (unwrapMessage.imageMessage && downloadedBuffer) {
                     finalReply = await analyzeImageWithAI(downloadedBuffer, cleanedText, ownerName, cleanSenderJid, pushName, mimeType, rawSockName || defaultOwnerName, isGroup, isGroup ? jid : null);
                 } else if (/who is (your|the) owner|(who (owns|runs) this)/i.test(cleanedText.toLowerCase())) {
                     finalReply = `hi, this is ${ownerName}'s assistant speaking. what do you need?`;
                 } else if (cleanedText) {
-                    finalReply = await getAIReply(cleanSenderJid, cleanedText, isGroup, ownerName, extractPhoneNumber(botJid), pushName, rawSockName || defaultOwnerName, isGroup ? jid : null);
+                    finalReply = await getAIReply(cleanSenderJid, cleanedText, isGroup, ownerName, ownerPhoneNumber, pushName, rawSockName || defaultOwnerName, isGroup ? jid : null);
                 }
-
                 if (finalReply) {
                     await simulateHumanTyping(sock, jid, finalReply, msg.key);
-                    if (db.settings.voiceMode && !isGroup) {
+                    // FIX (voice mode DM-only): this used to hard-require !isGroup, so Voice Mode
+                    // silently fell back to text the moment a group tag triggered a reply. Voice Mode
+                    // now follows the exact same reach as Text Mode - wherever the bot is allowed to
+                    // reply (DM always, group only when tagged + Group Chat Mode is on), it now also
+                    // sends that reply as a voice note when Voice Mode is on, quoting the tagger in
+                    // groups so it's clear who it's answering.
+                    if (db.settings.voiceMode) {
                         try {
                             const oggPath = await generateAudioResponse(finalReply);
-                            await sock.sendMessage(jid, { audio: { url: oggPath }, ptt: true, mimetype: 'audio/ogg; codecs=opus' });
+                            await sock.sendMessage(
+                                jid,
+                                { audio: { url: oggPath }, ptt: true, mimetype: 'audio/ogg; codecs=opus' },
+                                isGroup ? { quoted: msg } : {}
+                            );
                             if (fs.existsSync(oggPath)) fs.unlinkSync(oggPath);
                             continue;
                         } catch (audioErr) {}
@@ -1460,7 +1704,6 @@ Available Commands:
                 }
                 continue;
             }
-
             // ===== GROUP MODERATION & KICK ENGINE =====
             if (isGroup) {
                 try {
@@ -1523,5 +1766,4 @@ Available Commands:
         }
     });
 }
-
 startSuperiorAssistant();

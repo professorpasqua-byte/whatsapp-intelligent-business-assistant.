@@ -15,7 +15,10 @@
     "@google/generative-ai": "^0.24.1",
     "@whiskeysockets/baileys": "^7.0.0-rc14",
     "axios": "^1.19.0",
+    "edge-tts": "^1.0.1",
     "form-data": "^4.0.6",
+    "node-edge-tts": "^1.2.10",
+    "node-webpmux": "^3.2.1",
     "pino": "^10.3.1",
     "readline-sync": "^1.4.10"
   }
