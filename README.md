@@ -211,12 +211,9 @@ Model:
 
 #### Voice responses
 
-When Voice Mode is enabled, AI responses can be converted into audio using:
+When Voice Mode is enabled, AI responses are now converted into audio using **Microsoft Edge's free neural TTS voices** (via `node-edge-tts`) for a much more natural, human-sounding voice note, with eSpeak + FFmpeg kept on standby as an automatic fallback if the neural engine is ever unreachable.
 
-- eSpeak
-- FFmpeg
-
-and sent as WhatsApp voice notes.
+Multiple neural voices are available and switchable on the fly, including US, UK, Irish, South African, and Nigerian English voices.
 
 ---
 
@@ -289,6 +286,24 @@ The status can contain:
 
 ---
 
+### 🌐 Live Translation
+
+The assistant can translate text into any of its supported languages on demand, either from typed text or from a replied-to message, powered by the same Groq AI engine used for conversation.
+
+---
+
+### 📊 Polls
+
+The assistant can create native WhatsApp polls directly in a chat, with a question and up to 12 selectable options.
+
+---
+
+### 💤 AFK Mode
+
+The owner can mark themselves as away with an optional reason, so the assistant is aware they're AFK when relevant, and clear the status when they're back.
+
+---
+
 ## 👥 Group Features
 
 ### 🛡️ Automated Group Moderation
@@ -308,6 +323,20 @@ The bot requires the appropriate group permissions for moderation actions.
 
 ---
 
+### 🛡️ Duplicate Media Antispam
+
+The assistant can optionally detect repeated stickers, photos, or videos being spammed in a group.
+
+It can:
+
+- Delete the repeated media
+- Warn the sender
+- Remove repeat offenders after 3 strikes
+
+This is a toggleable feature, separate from the group-link moderation above.
+
+---
+
 ### 👥 Group Chat Mode
 
 Group Chat Mode controls whether the AI responds inside groups.
@@ -321,8 +350,6 @@ When enabled, the assistant can respond when:
 When disabled, the AI remains silent in groups.
 
 ---
-
-### 📢 Hidetag
 
 ### 📢 Hidetag
 
@@ -385,6 +412,12 @@ Supported media includes:
 - Video notes
 
 Voice messages can additionally be passed to the transcription system.
+
+---
+
+### 🥷 Sticker Stealer
+
+Reply to a sticker, image, or video with a command to instantly repackage it as a sticker, tagged with a custom pack/author name.
 
 ---
 
@@ -473,6 +506,18 @@ Set or reset the owner's displayed name.
 
 ---
 
+### 📞 Owner Number
+
+Set or reset the owner's configured contact number, independent of the owner name.
+
+**Commands**
+
+    !ownernumber <number>
+    !ownernumber set <number>
+    !ownernumber clear
+
+---
+
 ### 🐍 Python / Termux Bridge
 
 Execute configured Python commands through the Termux environment.
@@ -500,6 +545,98 @@ Change, view, or reset the assistant's configured language.
     !lang french
     !lang japanese
     !lang pidgin
+
+---
+
+### 🌐 Translate
+
+Translate typed text, or a replied-to message, into any supported language.
+
+**Command**
+
+    !translate <language> <text>
+
+**Example**
+
+    !translate french Good morning, how are you?
+
+_Or reply to a message with `!translate <language>`._
+
+---
+
+### 🎙️ TTS Voice
+
+Choose which Edge TTS neural voice the assistant uses for its voice-note responses.
+
+**Commands**
+
+    !ttsvoice
+    !ttsvoice list
+    !ttsvoice reset
+
+**Example**
+
+    !ttsvoice en-NG-AbeoNeural
+
+---
+
+### 📊 Poll
+
+Create a native WhatsApp poll.
+
+**Command**
+
+    !poll <question> | option1 | option2 | option3...
+
+**Example**
+
+    !poll What should we eat? | Pizza | Suya | Jollof
+
+---
+
+### 🚫 Blacklist
+
+Block a number so the assistant fully ignores it.
+
+**Commands**
+
+    !blacklist <number>
+    !blacklist list
+    !blacklist remove <number>
+
+_In groups, @mention someone or reply to their message with `!blacklist` instead of typing a number._
+
+---
+
+### 💤 AFK
+
+Mark the owner as away, with an optional reason.
+
+**Commands**
+
+    !afk <reason>
+    !afk clear
+
+---
+
+### 🛡️ Duplicate Media Antispam
+
+Toggle automatic detection and removal of repeated stickers/photos/videos in groups.
+
+**Commands**
+
+    !antispam on
+    !antispam off
+
+---
+
+### 🥷 Steal
+
+Reply to a sticker, image, or video to steal it as a tagged sticker.
+
+**Command**
+
+    !steal
 
 ---
 
@@ -602,9 +739,14 @@ The status information can include:
 - Group Chat Mode
 - Business Mode
 - Current language
+- Owner name and number
 - Assistant mood
 - Nigeria time
 - Daily bio update status
+- Blacklisted number count
+- AFK status
+- Current TTS voice
+- Duplicate media antispam status
 
 ---
 
@@ -619,8 +761,16 @@ The status information can include:
 | `!prices` | Manage products and pricing |
 | `!location` | Manage business location |
 | `!owner` | Manage owner name |
+| `!ownernumber` | Manage owner number |
 | `!py` | Execute configured Python commands through Termux |
 | `!lang` | Change assistant language |
+| `!translate` | Translate text or a replied-to message |
+| `!ttsvoice` | Choose the Edge TTS neural voice |
+| `!poll` | Create a native WhatsApp poll |
+| `!blacklist` | Block a number from the assistant |
+| `!afk` | Set or clear AFK status |
+| `!antispam` | Toggle duplicate media auto-moderation |
+| `!steal` | Steal a sticker/image/video as a sticker |
 | `!hidetag` | Mention all group members |
 | `!listonline` | Detect active group members |
 | `!svcontact` | Export group contacts |
@@ -679,6 +829,7 @@ Used for:
 
 - AI text generation
 - Whisper voice transcription
+- Live translation
 
 ### OpenRouter
 
@@ -729,6 +880,8 @@ Make sure the hosting environment supports the required dependencies, especially
 - OpenRouter
 - Llama / Groq AI
 - Whisper
+- Edge TTS (`node-edge-tts`)
+- node-webpmux
 - FFmpeg
 - eSpeak
 
